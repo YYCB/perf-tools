@@ -1,0 +1,15 @@
+# Editor / OS noise
+*.swp
+*.swo
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local virtualenvs / build artifacts
+.venv/
+venv/
+build/
+dist/
+
+# Local test scratch
+/tmp/
