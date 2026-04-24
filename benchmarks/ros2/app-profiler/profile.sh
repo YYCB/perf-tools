@@ -39,7 +39,20 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+
+# Walk up to the repo root, identified by the presence of a .git directory.
+# Expected layout: <root>/benchmarks/ros2/app-profiler/profile.sh
+_find_root() {
+  local dir="$1"
+  while [[ "${dir}" != "/" ]]; do
+    [[ -d "${dir}/.git" ]] && { echo "${dir}"; return 0; }
+    dir="$(dirname "${dir}")"
+  done
+  # Fallback: four levels up (original assumption) with a clear comment.
+  # benchmarks/ros2/app-profiler/ is three levels below the repo root.
+  echo "$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+}
+ROOT="$(_find_root "${SCRIPT_DIR}")"
 
 # ── Argument defaults ─────────────────────────────────────────────────────────
 TARGET_PID=""
