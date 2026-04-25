@@ -166,7 +166,7 @@ results/orin/feature-ab-test_2026-04-24T10-00-00Z/
 
 | 区块 | 内容 |
 |---|---|
-| **状态对比表** | 各标记状态的 Avg/p95/Peak CPU%、Avg/Peak RSS、平均线程数、样本数 |
+| **状态对比表** | 各标记状态的 Avg/p95/p99/Peak CPU%、Avg/Peak RSS、平均线程数、样本数 |
 | **CPU 时序图** | CPU% 随时间变化，状态区间用色带标注 |
 | **内存时序图** | RSS（MB）随时间变化 |
 | **线程数图** | 线程数变化（可观察动态创建/销毁） |
@@ -306,7 +306,7 @@ colcon build --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 生成一份**自包含 HTML**，包含：
 
 - **Fairness Statement** — 两侧 `env.json` 关键项对比（kernel / governor / RMW / 域 ID 等），不一致行高亮 ⚠️
-- **Global Summary** — CPU / RSS / 线程数 / FD / 上下文切换 的 avg/p50/p95/max 双栏对比 + Δ% + 优劣判定
+- **Global Summary** — CPU / RSS / 线程数 / FD / 上下文切换 的 avg/p50/p95/p99/max 双栏对比 + Δ% + 优劣判定
 - **Per-state Comparison** — 自动按状态标签（如 `feature_on` / `feature_off`）对齐，仅两侧都存在的标签会逐项对比；只在一侧出现的标签会单独列出
 - **Time-series Overlays** — CPU / RSS / 线程数 / FD / 上下文切换 五张折线图，A 蓝 / B 红，时间轴用各自相对开始时间对齐
 

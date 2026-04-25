@@ -3,7 +3,7 @@
 
 Reads a profiling session directory produced by profile.sh / monitor.py and
 writes a single report.html that contains:
-  - Per-state statistics table (avg / p95 / peak CPU%, RSS, threads)
+  - Per-state statistics table (avg / p95 / p99 / peak CPU%, RSS, threads)
   - Time-series charts drawn with vanilla JS + Canvas (no CDN / external deps)
   - Flame graph SVG embedded inline (if present in the session directory)
   - Environment snapshot summary
@@ -60,11 +60,13 @@ def _pct(vals: list[float], p: float) -> float:
 
 def _stat(vals: list[float]) -> dict[str, Any]:
     if not vals:
-        return {"avg": None, "p50": None, "p95": None, "max": None, "min": None, "count": 0}
+        return {"avg": None, "p50": None, "p95": None, "p99": None,
+                "max": None, "min": None, "count": 0}
     return {
         "avg":   round(statistics.fmean(vals), 2),
         "p50":   round(_pct(vals, 50), 2),
         "p95":   round(_pct(vals, 95), 2),
+        "p99":   round(_pct(vals, 99), 2),
         "max":   round(max(vals), 2),
         "min":   round(min(vals), 2),
         "count": len(vals),
@@ -132,6 +134,7 @@ def _state_table_rows(state_stats: list[dict]) -> str:
             f"<td>{dur}</td>"
             f"<td>{_fmt(ss['cpu']['avg'])}%</td>"
             f"<td>{_fmt(ss['cpu']['p95'])}%</td>"
+            f"<td>{_fmt(ss['cpu']['p99'])}%</td>"
             f"<td>{_fmt(ss['cpu']['max'])}%</td>"
             f"<td>{_fmt(ss['rss']['avg'])} MB</td>"
             f"<td>{_fmt(ss['rss']['max'])} MB</td>"
@@ -139,7 +142,7 @@ def _state_table_rows(state_stats: list[dict]) -> str:
             f"<td>{ss['sample_count']}</td>"
             f"</tr>"
         )
-    return "\n".join(rows) if rows else "<tr><td colspan='9' class='empty'>No named states — use <code>m &lt;label&gt;</code> in the REPL to mark states</td></tr>"
+    return "\n".join(rows) if rows else "<tr><td colspan='10' class='empty'>No named states — use <code>m &lt;label&gt;</code> in the REPL to mark states</td></tr>"
 
 
 # ── Environment summary ───────────────────────────────────────────────────────
@@ -447,7 +450,7 @@ def _build_html(
     <thead>
       <tr>
         <th>State label</th><th>Duration</th>
-        <th>Avg CPU%</th><th>p95 CPU%</th><th>Peak CPU%</th>
+        <th>Avg CPU%</th><th>p95 CPU%</th><th>p99 CPU%</th><th>Peak CPU%</th>
         <th>Avg RSS</th><th>Peak RSS</th>
         <th>Avg Threads</th><th>Samples</th>
       </tr>

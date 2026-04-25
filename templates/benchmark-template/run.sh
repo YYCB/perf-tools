@@ -127,6 +127,7 @@ doc = {
         "events_per_sec": {
             "p50": pct(50),
             "p95": pct(95),
+            "p99": pct(99),
             "min": min(samples),
             "max": max(samples),
             "avg": statistics.fmean(samples),

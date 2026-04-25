@@ -14,7 +14,7 @@ The tool produces a single self-contained ``compare.html`` that contains:
 
   * a header with both session labels
   * a fairness statement comparing the two ``env.json`` snapshots
-  * a global summary table (avg/p50/p95/max for CPU, RSS, threads, FDs)
+  * a global summary table (avg/p50/p95/p99/max for CPU, RSS, threads, FDs)
     with Δ%% and a lower-is-better aware verdict
   * a per-state table (only labels common to both sessions)
   * time-series overlay charts (vanilla JS + Canvas, no CDN) with both
@@ -128,12 +128,13 @@ def _pct(vals: list[float], p: float) -> float:
 
 def _stat(vals: list[float]) -> dict[str, Any]:
     if not vals:
-        return {"avg": None, "p50": None, "p95": None, "max": None,
-                "min": None, "count": 0}
+        return {"avg": None, "p50": None, "p95": None, "p99": None,
+                "max": None, "min": None, "count": 0}
     return {
         "avg":   round(statistics.fmean(vals), 2),
         "p50":   round(_pct(vals, 50), 2),
         "p95":   round(_pct(vals, 95), 2),
+        "p99":   round(_pct(vals, 99), 2),
         "max":   round(max(vals), 2),
         "min":   round(min(vals), 2),
         "count": len(vals),
@@ -438,12 +439,13 @@ def _summary_table_html(
     label_b: str,
 ) -> str:
     rows: list[str] = []
-    # Five-stat table (Avg / p50 / p95 / Max) per metric.
+    # Stat table (Avg / p50 / p95 / p99 / Max) per metric.
     for key, display, unit, _ in METRIC_DEFS:
         a = a_stats.get(key, {})
         b = b_stats.get(key, {})
         for stat_key, stat_label in (
-            ("avg", "avg"), ("p50", "p50"), ("p95", "p95"), ("max", "max"),
+            ("avg", "avg"), ("p50", "p50"), ("p95", "p95"),
+            ("p99", "p99"), ("max", "max"),
         ):
             av = a.get(stat_key)
             bv = b.get(stat_key)
@@ -486,7 +488,7 @@ def _per_state_table_html(
         for key, display, unit, _ in METRIC_DEFS:
             a = a_states[label].get(key, {})
             b = b_states[label].get(key, {})
-            for stat_key in ("avg", "p95", "max"):
+            for stat_key in ("avg", "p95", "p99", "max"):
                 av = a.get(stat_key)
                 bv = b.get(stat_key)
                 verdict = _verdict(av, bv, key)

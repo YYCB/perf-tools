@@ -253,13 +253,14 @@ with open(_env("PT_METRICS_FILE")) as fh:
 
 def _stat(vals):
     if not vals:
-        return {"p50": None, "p95": None, "avg": None, "max": None, "min": None, "stdev": None}
+        return {"p50": None, "p95": None, "p99": None, "avg": None,
+                "max": None, "min": None, "stdev": None}
     s = sorted(vals)
     def pct(p):
         if len(s) == 1: return s[0]
         k = (len(s) - 1) * (p / 100.0); lo = int(k); hi = min(lo+1, len(s)-1)
         return round(s[lo] + (s[hi]-s[lo]) * (k-lo), 3)
-    return {"p50": pct(50), "p95": pct(95),
+    return {"p50": pct(50), "p95": pct(95), "p99": pct(99),
             "avg": round(statistics.fmean(vals), 3),
             "max": round(max(vals), 3), "min": round(min(vals), 3),
             "stdev": round(statistics.pstdev(vals) if len(vals) > 1 else 0, 3)}
