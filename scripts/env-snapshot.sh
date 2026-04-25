@@ -55,9 +55,33 @@ for tz in /sys/class/thermal/thermal_zone*; do
 done
 export PT_THERMAL="${THERMAL}"
 
-# Vendor-specific power tools (best-effort; require sudo on Jetson)
-export PT_NVPMODEL="$(safe sudo -n nvpmodel -q)"
-export PT_JETSON_CLOCKS="$(safe sudo -n jetson_clocks --show)"
+# Platform-specific telemetry (best-effort; vendor tools may require sudo or SDK).
+export PT_NVPMODEL=""
+export PT_JETSON_CLOCKS=""
+export PT_TEGRASTATS_SNAP=""
+export PT_HRUT_SOC=""
+export PT_HRUT_POWER=""
+export PT_HRUT_FREQ=""
+
+case "${PLATFORM}" in
+  orin)
+    export PT_NVPMODEL="$(safe sudo -n nvpmodel -q)"
+    export PT_JETSON_CLOCKS="$(safe sudo -n jetson_clocks --show)"
+    # One-shot tegrastats sample for the snapshot (interval 1000 ms, take 1 line).
+    export PT_TEGRASTATS_SNAP="$(safe timeout 3 tegrastats --interval 1000 | head -n 1)"
+    ;;
+  s100)
+    # Horizon RDK SDK tools — present on RDK OS images.
+    export PT_HRUT_SOC="$(safe hrut_soc 2>/dev/null || true)"
+    export PT_HRUT_POWER="$(safe hrut_power 2>/dev/null || true)"
+    export PT_HRUT_FREQ="$(safe hrut_freq 2>/dev/null || true)"
+    ;;
+  *)
+    # Attempt Jetson tools anyway in case platform string differs.
+    export PT_NVPMODEL="$(safe sudo -n nvpmodel -q)"
+    export PT_JETSON_CLOCKS="$(safe sudo -n jetson_clocks --show)"
+    ;;
+esac
 
 export PT_LSPCI="$(safe lspci)"
 export PT_LSUSB="$(safe lsusb)"
@@ -102,8 +126,12 @@ doc = {
     "memory": {"meminfo_head": env("PT_MEMINFO")},
     "thermal_milli_c": env("PT_THERMAL"),
     "vendor_power": {
-        "nvpmodel": env("PT_NVPMODEL"),
-        "jetson_clocks": env("PT_JETSON_CLOCKS"),
+        "nvpmodel":        env("PT_NVPMODEL"),
+        "jetson_clocks":   env("PT_JETSON_CLOCKS"),
+        "tegrastats_snap": env("PT_TEGRASTATS_SNAP"),
+        "hrut_soc":        env("PT_HRUT_SOC"),
+        "hrut_power":      env("PT_HRUT_POWER"),
+        "hrut_freq":       env("PT_HRUT_FREQ"),
     },
     "io": {
         "lsblk": env("PT_LSBLK"),

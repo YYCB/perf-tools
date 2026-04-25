@@ -10,8 +10,10 @@ Usage:
 Behaviour:
 - Loads every *.json (except env.json) from each run dir.
 - Joins by `benchmark` id, then by metric name.
-- For each numeric metric (uses p50, falling back to avg), reports
-  A, B, absolute delta, percent delta.
+- For each numeric metric (uses p50, falling back to avg/p95/p99/max), reports
+  A, B, absolute delta, percent delta, and optional perf-per-W columns.
+- When a benchmark result contains a `power_w` metric, adds "A perf/W" and
+  "B perf/W" columns (metric_primary / power_w_avg) for higher-is-better metrics.
 - Reads env.json from both sides and emits a fairness statement table.
 - Higher-is-better vs lower-is-better is inferred from the metric name
   (latency/jitter/temp/power/error -> lower; everything else -> higher).
@@ -55,7 +57,7 @@ def load_run(run_dir: Path) -> dict[str, Any]:
 
 
 def primary_value(metric: dict[str, Any]) -> float | None:
-    for key in ("p50", "avg", "p95", "max"):
+    for key in ("p50", "avg", "p95", "p99", "max"):
         v = metric.get(key)
         if isinstance(v, (int, float)):
             return float(v)
@@ -104,6 +106,16 @@ def render_fairness(env_a: dict, env_b: dict, label_a: str, label_b: str) -> lis
     return out
 
 
+def _power_w(metrics: dict[str, Any]) -> float | None:
+    """Return average power in Watts if a power_w metric exists in this result."""
+    pm = metrics.get("power_w")
+    if isinstance(pm, dict):
+        v = pm.get("avg") or pm.get("p50")
+        if isinstance(v, (int, float)):
+            return float(v)
+    return None
+
+
 def render_diffs(run_a: dict, run_b: dict) -> list[str]:
     a_b = run_a["benchmarks"]
     b_b = run_b["benchmarks"]
@@ -114,6 +126,8 @@ def render_diffs(run_a: dict, run_b: dict) -> list[str]:
     lines = ["## Benchmark Deltas\n"]
     lines.append("Δ% is `(B - A) / A * 100`. Verdict prefers higher values unless the metric "
                  "name suggests lower-is-better (latency / jitter / power / temp / error / loss / miss).\n")
+    lines.append("perf/W columns show `metric_primary / power_w_avg` when a `power_w` metric "
+                 "is present in the same benchmark result.\n")
 
     for bid in all_ids:
         lines.append(f"### `{bid}`\n")
@@ -128,8 +142,18 @@ def render_diffs(run_a: dict, run_b: dict) -> list[str]:
         a_metrics = a.get("metrics", {})
         b_metrics = b.get("metrics", {})
         names = sorted(set(a_metrics) | set(b_metrics))
-        lines.append("| Metric | Unit | A | B | Δ | Δ% | Verdict |")
-        lines.append("|---|---|---|---|---|---|---|")
+
+        a_power = _power_w(a_metrics)
+        b_power = _power_w(b_metrics)
+        show_perf_w = a_power is not None or b_power is not None
+
+        if show_perf_w:
+            lines.append("| Metric | Unit | A | B | Δ | Δ% | A perf/W | B perf/W | Verdict |")
+            lines.append("|---|---|---|---|---|---|---|---|---|")
+        else:
+            lines.append("| Metric | Unit | A | B | Δ | Δ% | Verdict |")
+            lines.append("|---|---|---|---|---|---|---|")
+
         for name in names:
             am = a_metrics.get(name, {})
             bm = b_metrics.get(name, {})
@@ -137,7 +161,10 @@ def render_diffs(run_a: dict, run_b: dict) -> list[str]:
             av = primary_value(am) if isinstance(am, dict) else None
             bv = primary_value(bm) if isinstance(bm, dict) else None
             if av is None or bv is None:
-                lines.append(f"| {name} | {unit} | {fmt(av)} | {fmt(bv)} | — | — | — |")
+                if show_perf_w:
+                    lines.append(f"| {name} | {unit} | {fmt(av)} | {fmt(bv)} | — | — | — | — | — |")
+                else:
+                    lines.append(f"| {name} | {unit} | {fmt(av)} | {fmt(bv)} | — | — | — |")
                 continue
             delta = bv - av
             pct = (delta / av * 100.0) if av != 0 else float("inf")
@@ -148,9 +175,17 @@ def render_diffs(run_a: dict, run_b: dict) -> list[str]:
                 verdict = "B better"
             else:
                 verdict = "A better"
-            lines.append(
-                f"| {name} | {unit} | {fmt(av)} | {fmt(bv)} | {fmt(delta)} | {pct:+.1f}% | {verdict} |"
-            )
+            if show_perf_w:
+                a_pw = fmt(av / a_power) if a_power and a_power > 0 and not is_lower_better(name) else "—"
+                b_pw = fmt(bv / b_power) if b_power and b_power > 0 and not is_lower_better(name) else "—"
+                lines.append(
+                    f"| {name} | {unit} | {fmt(av)} | {fmt(bv)} | {fmt(delta)} | {pct:+.1f}% "
+                    f"| {a_pw} | {b_pw} | {verdict} |"
+                )
+            else:
+                lines.append(
+                    f"| {name} | {unit} | {fmt(av)} | {fmt(bv)} | {fmt(delta)} | {pct:+.1f}% | {verdict} |"
+                )
         lines.append("")
     return lines
 
