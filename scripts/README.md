@@ -8,6 +8,7 @@ Generic glue used by every benchmark and report.
 | [`run-suite.sh`](run-suite.sh) | Orchestrate a `quick` or `full` benchmark suite for one platform |
 | [`collect-results.py`](collect-results.py) | Validate every result JSON and write a `results/<platform>/index.json` summary |
 | [`compare.py`](compare.py) | Diff two run directories, emit a Markdown report (with fairness statement + per-metric Δ%) |
+| [`compare-app-profile.py`](compare-app-profile.py) | Diff two `app-profiler` session directories; emit a self-contained HTML with fairness statement, global & per-state stat deltas, and time-series overlay charts |
 
 ## Quick reference
 
@@ -23,6 +24,13 @@ Generic glue used by every benchmark and report.
 python3 scripts/collect-results.py --platform=orin
 python3 scripts/compare.py --a results/orin/<run> --b results/s100/<run> \
     --out reports/orin-vs-s100.md
+
+# A/B comparison of two app-profiler sessions (e.g. feature on vs off,
+# or v1 vs v2 of the same node)
+python3 scripts/compare-app-profile.py \
+    --a results/orin/baseline_<ts> \
+    --b results/orin/feature-on_<ts> \
+    --out reports/feature-ab.html
 ```
 
 ## Conventions

@@ -299,6 +299,33 @@ colcon build --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 ## 与其他工具集成
 
+### 跨会话回归对比（`scripts/compare-app-profile.py`）
+
+最常见的场景：**同一节点开/关某功能** 或 **v1 vs v2** 两个会话之间的回归对比。
+该脚本读取两个 session 目录（`metrics.jsonl` + `states.jsonl` + `env.json`），
+生成一份**自包含 HTML**，包含：
+
+- **Fairness Statement** — 两侧 `env.json` 关键项对比（kernel / governor / RMW / 域 ID 等），不一致行高亮 ⚠️
+- **Global Summary** — CPU / RSS / 线程数 / FD / 上下文切换 的 avg/p50/p95/max 双栏对比 + Δ% + 优劣判定
+- **Per-state Comparison** — 自动按状态标签（如 `feature_on` / `feature_off`）对齐，仅两侧都存在的标签会逐项对比；只在一侧出现的标签会单独列出
+- **Time-series Overlays** — CPU / RSS / 线程数 / FD / 上下文切换 五张折线图，A 蓝 / B 红，时间轴用各自相对开始时间对齐
+
+```bash
+# 两次运行同一节点：基线 vs 开启某功能
+python3 scripts/compare-app-profile.py \
+    --a results/orin/baseline_2026-04-24T10-00-00Z \
+    --b results/orin/feature-on_2026-04-24T11-00-00Z \
+    --label-a=baseline --label-b=feature-on \
+    --out reports/feature-ab.html
+
+# 跨平台对比同一会话（也可以）
+python3 scripts/compare-app-profile.py \
+    --a results/orin/load-test_<ts> \
+    --b results/s100/load-test_<ts>
+```
+
+输出 HTML 完全离线，可直接发邮件 / 上传到 PR。
+
 ### 与 scripts/compare.py 集成
 
 每次会话输出的 `ros2.app-profiler.json` 符合统一 schema（`docs/result-schema.md`），
