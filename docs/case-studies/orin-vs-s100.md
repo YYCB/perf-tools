@@ -1,6 +1,6 @@
 # 案例研究：Jetson AGX Orin → 地瓜 S100 平台量化对比
 
-> 状态：📝 模板 — 实测数据待 M2 完成。本文档既是工作流说明，也是后续报告的填空模板。
+> 本文档是端到端工作流说明 + 实测报告填空模板。实测数据在 M4 阶段（需硬件）补全。
 
 ## 0. 为什么做这件事
 
@@ -34,12 +34,13 @@
 
 ```bash
 # 在 Orin 上
+sudo ./scripts/install-deps.sh --ros-distro=humble  # 首次安装
 ./scripts/env-snapshot.sh --platform=orin
-./scripts/run-suite.sh --platform=orin --suite=full
+./scripts/run-suite.sh --platform=orin --suite=standard
 
-# 在 S100 上
+# 在 S100 上（同样的命令）
 ./scripts/env-snapshot.sh --platform=s100
-./scripts/run-suite.sh --platform=s100 --suite=full
+./scripts/run-suite.sh --platform=s100 --suite=standard
 ```
 
 `--suite=full` 包含：
@@ -58,10 +59,27 @@
 ## Step 3 — 生成对比报告
 
 ```bash
+# Markdown 格式
 python3 scripts/compare.py \
     --a results/orin/<date> \
     --b results/s100/<date> \
-    --out reports/orin-vs-s100-<yyyymm>.md
+    --out reports/orin-vs-s100-<yyyymm>.md --charts
+
+# HTML 格式（自动检测 .html 后缀）
+python3 scripts/compare.py \
+    --a results/orin/<date> \
+    --b results/s100/<date> \
+    --out reports/orin-vs-s100-<yyyymm>.html
+
+# 回归检测：保存 Orin 基线，将 S100 结果对比
+python3 scripts/regression.py save \
+    --run-dir results/orin/<date> \
+    --baseline baselines/orin.json
+python3 scripts/regression.py check \
+    --run-dir results/s100/<date> \
+    --baseline baselines/orin.json \
+    --warn-pct=10 --fail-pct=30 \
+    --out reports/s100-vs-orin-regression.md
 ```
 
 报告自动生成内容：
