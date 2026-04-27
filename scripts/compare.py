@@ -196,13 +196,120 @@ def render_diffs(run_a: dict, run_b: dict) -> list[str]:
     return lines
 
 
+def render_html(
+    run_a: dict,
+    run_b: dict,
+    label_a: str,
+    label_b: str,
+    path_a: str,
+    path_b: str,
+) -> str:
+    """Render a self-contained HTML comparison report (no external deps)."""
+    import html as _html
+
+    def h(s: str) -> str:
+        return _html.escape(str(s))
+
+    def fmt(v: Any) -> str:
+        if v is None:
+            return "—"
+        if isinstance(v, float):
+            return f"{v:.4g}"
+        return str(v)
+
+    rows_html: list[str] = []
+    a_b = run_a["benchmarks"]
+    b_b = run_b["benchmarks"]
+    all_bids = sorted(set(a_b) | set(b_b))
+
+    for bid in all_bids:
+        a_doc = a_b.get(bid, {})
+        b_doc = b_b.get(bid, {})
+        a_metrics = a_doc.get("metrics", {})
+        b_metrics = b_doc.get("metrics", {})
+        all_names = sorted(set(a_metrics) | set(b_metrics))
+        for name in all_names:
+            am = a_metrics.get(name)
+            bm = b_metrics.get(name)
+            av = primary_value(am) if isinstance(am, dict) else None
+            bv = primary_value(bm) if isinstance(bm, dict) else None
+            unit = (am or bm or {}).get("unit", "")
+            lower = is_lower_better(name)
+            if av is not None and bv is not None and av != 0:
+                pct = (bv - av) / abs(av) * 100.0
+                better = (pct > 0 and not lower) or (pct < 0 and lower)
+                colour = "#d4edda" if better else ("#f8d7da" if not better else "")
+                verdict = "▲ B better" if better else "▼ A better"
+                delta_s = f"{pct:+.1f}%"
+            else:
+                colour = "#fff"
+                verdict = "—"
+                delta_s = "—"
+            rows_html.append(
+                f'<tr style="background:{colour}">'
+                f"<td>{h(bid)}</td><td>{h(name)}</td><td>{h(unit)}</td>"
+                f"<td>{h(fmt(av))}</td><td>{h(fmt(bv))}</td>"
+                f"<td>{h(delta_s)}</td><td>{h(verdict)}</td></tr>"
+            )
+
+    fairness_rows = ""
+    env_a = run_a.get("env", {})
+    env_b = run_b.get("env", {})
+    compare_keys = ["platform", "kernel", "cpu_model", "ros_distro", "rmw"]
+    for k in compare_keys:
+        va = env_a.get(k, "—") or "—"
+        vb = env_b.get(k, "—") or "—"
+        warn = " ⚠️" if va != vb else ""
+        fairness_rows += (
+            f"<tr><td><code>{h(k)}</code></td>"
+            f"<td>{h(str(va))}</td><td>{h(str(vb))}</td>"
+            f"<td>{warn}</td></tr>"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Comparison: {h(label_a)} vs {h(label_b)}</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #f8f9fa; }}
+  h1 {{ font-size: 1.5em; }} h2 {{ font-size: 1.1em; margin-top: 24px; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .9em; }}
+  th {{ background: #343a40; color: white; padding: 6px 10px; text-align: left; }}
+  td {{ padding: 5px 10px; border-bottom: 1px solid #dee2e6; }}
+  tr:hover td {{ background: rgba(0,0,0,.04); }}
+  .meta {{ color: #666; font-size: .85em; }}
+</style>
+</head>
+<body>
+<h1>📊 Comparison: {h(label_a)} vs {h(label_b)}</h1>
+<p class="meta">A: <code>{h(path_a)}</code><br>B: <code>{h(path_b)}</code></p>
+
+<h2>Fairness Check</h2>
+<table>
+<tr><th>Field</th><th>{h(label_a)} (A)</th><th>{h(label_b)} (B)</th><th>Match?</th></tr>
+{fairness_rows}
+</table>
+
+<h2>Metric Comparison</h2>
+<table>
+<tr><th>Benchmark</th><th>Metric</th><th>Unit</th>
+    <th>{h(label_a)} (A)</th><th>{h(label_b)} (B)</th><th>Δ B vs A</th><th>Verdict</th></tr>
+{"".join(rows_html)}
+</table>
+</body>
+</html>"""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--a", required=True, help="path to run dir A")
     ap.add_argument("--b", required=True, help="path to run dir B")
-    ap.add_argument("--out", required=True, help="output Markdown path")
+    ap.add_argument("--out", required=True, help="output file path (.md or .html)")
     ap.add_argument("--charts", action="store_true",
                     help="also generate bar + radar PNG charts (requires matplotlib)")
+    ap.add_argument("--format", choices=["markdown", "html"], default=None,
+                    help="output format (default: inferred from --out extension)")
     args = ap.parse_args()
 
     run_a = load_run(Path(args.a))
@@ -211,17 +318,26 @@ def main() -> int:
     label_a = run_a["env"].get("platform") or Path(args.a).parent.name
     label_b = run_b["env"].get("platform") or Path(args.b).parent.name
 
-    md: list[str] = []
-    md.append(f"# Comparison: {label_a} vs {label_b}\n")
-    md.append(f"- A: `{args.a}`")
-    md.append(f"- B: `{args.b}`\n")
-    md.extend(render_fairness(run_a["env"], run_b["env"], label_a, label_b))
-    md.extend(render_diffs(run_a, run_b))
-
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(md), encoding="utf-8")
-    print(f"wrote {out}")
+
+    fmt = args.format
+    if fmt is None:
+        fmt = "html" if out.suffix.lower() == ".html" else "markdown"
+
+    if fmt == "html":
+        html_content = render_html(run_a, run_b, label_a, label_b, args.a, args.b)
+        out.write_text(html_content, encoding="utf-8")
+        print(f"wrote {out}")
+    else:
+        md: list[str] = []
+        md.append(f"# Comparison: {label_a} vs {label_b}\n")
+        md.append(f"- A: `{args.a}`")
+        md.append(f"- B: `{args.b}`\n")
+        md.extend(render_fairness(run_a["env"], run_b["env"], label_a, label_b))
+        md.extend(render_diffs(run_a, run_b))
+        out.write_text("\n".join(md), encoding="utf-8")
+        print(f"wrote {out}")
 
     if args.charts:
         _write_charts(run_a, run_b, label_a, label_b, out)
