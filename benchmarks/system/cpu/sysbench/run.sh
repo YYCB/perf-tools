@@ -21,6 +21,7 @@ DURATION_S="10"
 ITERATIONS="5"
 WARMUP_S="3"
 PRIME="20000"
+TOOL_USED="sysbench"
 
 for arg in "$@"; do
   case "$arg" in
@@ -42,8 +43,9 @@ if [[ -z "${PLATFORM}" ]]; then
 fi
 
 if ! command -v sysbench >/dev/null 2>&1; then
-  echo "ERROR: 'sysbench' not found. Install with:  sudo apt-get install -y sysbench" >&2
-  exit 127
+  echo "WARN: 'sysbench' not found; using python3 CPU fallback (prime sieve)." >&2
+  echo "      Install with:  sudo apt-get install -y sysbench" >&2
+  TOOL_USED="python3"
 fi
 
 # Create a run dir if the caller didn't pass one.
@@ -56,41 +58,116 @@ RAW="${RUN_DIR}/${BENCH_ID}.raw.txt"
 JSON_OUT="${RUN_DIR}/${BENCH_ID}.json"
 : > "${RAW}"
 
-echo "[${BENCH_ID}] platform=${PLATFORM} threads=${THREADS} duration=${DURATION_S}s iterations=${ITERATIONS}"
+echo "[${BENCH_ID}] platform=${PLATFORM} tool=${TOOL_USED} threads=${THREADS} duration=${DURATION_S}s iterations=${ITERATIONS}"
 
-# Warm-up (discarded).
-if (( WARMUP_S > 0 )); then
-  echo "[${BENCH_ID}] warmup ${WARMUP_S}s..."
-  sysbench cpu --threads="${THREADS}" --time="${WARMUP_S}" --cpu-max-prime="${PRIME}" run >/dev/null 2>&1 || true
-fi
-
-# Iterations.
 SAMPLES_FILE="$(mktemp)"
 trap 'rm -f "${SAMPLES_FILE}"' EXIT
 
-for ((i = 1; i <= ITERATIONS; i++)); do
-  echo "[${BENCH_ID}] iter ${i}/${ITERATIONS}..."
-  {
-    echo "===== iter ${i} ====="
-    sysbench cpu --threads="${THREADS}" --time="${DURATION_S}" --cpu-max-prime="${PRIME}" run
-  } | tee -a "${RAW}" \
-    | awk -v out="${SAMPLES_FILE}" '
-        /events per second:/ {
-          # line looks like "    events per second:   1234.56"
-          val = $NF
-          print val >> out
-        }
-      '
-done
+if [[ "${TOOL_USED}" == "sysbench" ]]; then
+  # ── sysbench path ──────────────────────────────────────────────────────────
+  # Warm-up (discarded).
+  if (( WARMUP_S > 0 )); then
+    echo "[${BENCH_ID}] warmup ${WARMUP_S}s..."
+    sysbench cpu --threads="${THREADS}" --time="${WARMUP_S}" --cpu-max-prime="${PRIME}" run >/dev/null 2>&1 || true
+  fi
+
+  for ((i = 1; i <= ITERATIONS; i++)); do
+    echo "[${BENCH_ID}] iter ${i}/${ITERATIONS}..."
+    {
+      echo "===== iter ${i} ====="
+      sysbench cpu --threads="${THREADS}" --time="${DURATION_S}" --cpu-max-prime="${PRIME}" run
+    } | tee -a "${RAW}" \
+      | awk -v out="${SAMPLES_FILE}" '
+          /events per second:/ {
+            val = $NF
+            print val >> out
+          }
+        '
+  done
+
+else
+  # ── Python3 fallback: multi-threaded prime sieve ───────────────────────────
+  echo "[${BENCH_ID}] tool: python3 CPU fallback (prime sieve, ${THREADS} threads)" | tee -a "${RAW}"
+
+  # Warm-up
+  if (( WARMUP_S > 0 )); then
+    echo "[${BENCH_ID}] warmup ${WARMUP_S}s..."
+    python3 -c "
+import time, math
+deadline = time.monotonic() + ${WARMUP_S}
+n = 0
+while time.monotonic() < deadline:
+    for x in range(2, int(math.sqrt(${PRIME})) + 1):
+        pass
+    n += 1
+" 2>/dev/null || true
+  fi
+
+  PT_THREADS="${THREADS}" \
+  PT_DURATION_S="${DURATION_S}" \
+  PT_ITERATIONS="${ITERATIONS}" \
+  PT_PRIME="${PRIME}" \
+  PT_SAMPLES_FILE="${SAMPLES_FILE}" \
+  PT_RAW="${RAW}" \
+  python3 - <<'PYCPU'
+import os, time, math
+from concurrent.futures import ThreadPoolExecutor
+
+threads    = int(os.environ["PT_THREADS"])
+duration_s = int(os.environ["PT_DURATION_S"])
+iterations = int(os.environ["PT_ITERATIONS"])
+prime_max  = int(os.environ["PT_PRIME"])
+out_path   = os.environ["PT_SAMPLES_FILE"]
+raw_path   = os.environ["PT_RAW"]
+
+def _count_primes(limit: int) -> int:
+    """Return number of primes up to limit using trial-division.
+    Intentionally conservative (O(n·√n)) to serve as a CPU stress load.
+    Results will be lower than sysbench's optimised implementation — this
+    is a conservative lower bound, not a competitive benchmark.
+    """
+    count = 0
+    for n in range(2, limit + 1):
+        if all(n % d != 0 for d in range(2, int(math.sqrt(n)) + 1)):
+            count += 1
+    return count
+
+def worker(stop_at: float):
+    events = 0
+    while time.monotonic() < stop_at:
+        _count_primes(prime_max)
+        events += 1
+    return events
+
+for i in range(iterations):
+    t0 = time.monotonic()
+    stop_at = t0 + duration_s
+    futures = []
+    with ThreadPoolExecutor(max_workers=threads) as ex:
+        for _ in range(threads):
+            futures.append(ex.submit(worker, stop_at))
+        results = [f.result() for f in futures]
+    elapsed = time.monotonic() - t0
+    total_events = sum(results)
+    eps = total_events / elapsed
+    msg = f"iter={i+1} events={total_events} elapsed={elapsed:.2f}s eps={eps:.2f}"
+    print(msg)
+    with open(raw_path, 'a') as rf:
+        rf.write(msg + "\n")
+    with open(out_path, 'a') as sf:
+        sf.write(f"{eps:.4f}\n")
+PYCPU
+fi
 
 if [[ ! -s "${SAMPLES_FILE}" ]]; then
-  echo "ERROR: no samples parsed from sysbench output. See ${RAW}" >&2
+  echo "ERROR: no samples collected. See ${RAW}" >&2
   exit 1
 fi
 
 # Aggregate + write JSON via Python (statistics stdlib).
 PT_BENCH_ID="${BENCH_ID}" \
 PT_PLATFORM="${PLATFORM}" \
+PT_TOOL="${TOOL_USED}" \
 PT_THREADS="${THREADS}" \
 PT_DURATION_S="${DURATION_S}" \
 PT_ITERATIONS="${ITERATIONS}" \
@@ -129,6 +206,7 @@ def pct(p):
         return samples_sorted[f]
     return samples_sorted[f] + (samples_sorted[c] - samples_sorted[f]) * (k - f)
 
+tool = env("PT_TOOL")
 doc = {
     "schema_version": "1",
     "benchmark": env("PT_BENCH_ID"),
@@ -137,6 +215,7 @@ doc = {
     "host": socket.gethostname(),
     "env_ref": "env.json",
     "params": {
+        "tool": tool,
         "threads": int(env("PT_THREADS")),
         "duration_s": int(env("PT_DURATION_S")),
         "cpu_max_prime": int(env("PT_PRIME")),
@@ -156,7 +235,12 @@ doc = {
     "raw_samples": samples,
     "iterations": int(env("PT_ITERATIONS")),
     "warmup_s": int(env("PT_WARMUP_S")),
-    "notes": "sysbench cpu, single-process. Numbers are events/s reported per iteration.",
+    "notes": (
+        "sysbench cpu: prime sieve, single-process, events/s per iteration. "
+        "python3 fallback: multi-threaded trial-division prime sieve (O(n*sqrt(n))). "
+        "Fallback values are a CONSERVATIVE LOWER BOUND — expect 10-100x fewer events/s "
+        "than sysbench due to Python overhead and unoptimised algorithm."
+    ),
 }
 
 with open(env("PT_JSON_OUT"), "w", encoding="utf-8") as f:

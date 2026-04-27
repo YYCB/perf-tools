@@ -64,6 +64,7 @@ jobs:
           for f in \
             scripts/run-suite.sh \
             scripts/env-snapshot.sh \
+            scripts/install-deps.sh \
             benchmarks/system/cpu/sysbench/run.sh \
             benchmarks/system/memory/run.sh \
             benchmarks/system/network/run.sh \
@@ -199,21 +200,25 @@ jobs:
       - name: Install sysbench and run a real benchmark
         run: |
           sudo apt-get install -y --no-install-recommends sysbench
+          # env-snapshot creates results/<platform>/<run-id>/ automatically
+          RUNDIR=$(./scripts/env-snapshot.sh --platform=ci-runner --out-dir=/tmp/schema-results)
           ./benchmarks/system/cpu/sysbench/run.sh \
             --platform=ci-runner \
-            --run-dir=/tmp/schema-test \
+            --run-dir="${RUNDIR}" \
             --threads=2 --duration=5 --iterations=3
           python3 scripts/collect-results.py \
             --platform=ci-runner \
-            --results-dir=/tmp
+            --results-dir=/tmp/schema-results
 
-          # Verify index.json was created and has no errors
+          # Verify index.json was created and has no schema errors
           python3 - << 'PY'
-          import json, sys
-          idx = json.load(open('/tmp/ci-runner/index.json'))
+          import json, sys, pathlib
+          idx_path = pathlib.Path('/tmp/schema-results/ci-runner/index.json')
+          idx = json.loads(idx_path.read_text())
           errors = [e for r in idx['runs'] for e in r.get('errors', [])]
           if errors:
               print(f"SCHEMA ERRORS: {errors}", file=sys.stderr)
               sys.exit(1)
-          print(f"OK: {len(idx['runs'])} run(s), no schema errors")
+          n_bench = sum(len(r['benchmarks']) for r in idx['runs'])
+          print(f"OK: {len(idx['runs'])} run(s), {n_bench} benchmark(s), no schema errors")
           PY
