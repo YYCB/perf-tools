@@ -5,7 +5,8 @@ Usage:
     python3 scripts/compare.py \
         --a results/orin/2026-04-23T17-00-00Z \
         --b results/s100/2026-04-23T17-00-00Z \
-        --out reports/orin-vs-s100.md
+        --out reports/orin-vs-s100.md \
+        [--charts]   # also write PNG charts alongside the Markdown
 
 Behaviour:
 - Loads every *.json (except env.json) from each run dir.
@@ -17,6 +18,11 @@ Behaviour:
 - Reads env.json from both sides and emits a fairness statement table.
 - Higher-is-better vs lower-is-better is inferred from the metric name
   (latency/jitter/temp/power/error -> lower; everything else -> higher).
+
+Charts (--charts):
+- Bar chart: normalised B/A ratio per metric (>1 = B better for higher-is-better).
+- Radar chart: same data on a polar axis, one spoke per metric.
+  Both PNG files are written next to --out.
 """
 from __future__ import annotations
 
@@ -195,6 +201,8 @@ def main() -> int:
     ap.add_argument("--a", required=True, help="path to run dir A")
     ap.add_argument("--b", required=True, help="path to run dir B")
     ap.add_argument("--out", required=True, help="output Markdown path")
+    ap.add_argument("--charts", action="store_true",
+                    help="also generate bar + radar PNG charts (requires matplotlib)")
     args = ap.parse_args()
 
     run_a = load_run(Path(args.a))
@@ -214,7 +222,118 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(md), encoding="utf-8")
     print(f"wrote {out}")
+
+    if args.charts:
+        _write_charts(run_a, run_b, label_a, label_b, out)
+
     return 0
+
+
+# ─── chart helpers ────────────────────────────────────────────────────────────
+
+def _collect_ratios(
+    run_a: dict, run_b: dict
+) -> tuple[list[str], list[float]]:
+    """Return (labels, ratios) where ratio = B/A normalised so >1 always means B is better.
+
+    For lower-is-better metrics the ratio is inverted (A/B), so the chart is
+    consistently "taller bar = better B".
+    """
+    labels: list[str] = []
+    ratios: list[float] = []
+
+    a_b = run_a["benchmarks"]
+    b_b = run_b["benchmarks"]
+    for bid in sorted(set(a_b) & set(b_b)):
+        a_metrics = a_b[bid].get("metrics", {})
+        b_metrics = b_b[bid].get("metrics", {})
+        for name in sorted(set(a_metrics) & set(b_metrics)):
+            am = a_metrics[name]
+            bm = b_metrics[name]
+            if not isinstance(am, dict) or not isinstance(bm, dict):
+                continue
+            av = primary_value(am)
+            bv = primary_value(bm)
+            if av is None or bv is None or av == 0:
+                continue
+            ratio = bv / av
+            if is_lower_better(name):
+                ratio = av / bv  # invert so >1 still means "B wins"
+            short = f"{bid.split('.')[-1]}\n{name}"
+            labels.append(short)
+            ratios.append(ratio)
+    return labels, ratios
+
+
+def _write_charts(
+    run_a: dict,
+    run_b: dict,
+    label_a: str,
+    label_b: str,
+    out_md: Path,
+) -> None:
+    try:
+        import math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("WARN: matplotlib / numpy not found; skipping charts (pip install matplotlib numpy)",
+              file=sys.stderr)
+        return
+
+    labels, ratios = _collect_ratios(run_a, run_b)
+    if not labels:
+        print("WARN: no comparable metrics found for charts", file=sys.stderr)
+        return
+
+    stem = out_md.with_suffix("")
+
+    # ── bar chart ─────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(max(8, len(labels) * 0.9), 5))
+    colors = ["#e74c3c" if r < 1 else "#2ecc71" for r in ratios]
+    x = np.arange(len(labels))
+    ax.bar(x, ratios, color=colors, edgecolor="white", linewidth=0.5)
+    ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--", label="A = B")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=7, ha="center")
+    ax.set_ylabel(f"B / A ratio  (>1 → {label_b} better)")
+    ax.set_title(f"{label_a} vs {label_b} — normalised comparison\n"
+                 "(lower-is-better metrics are inverted so >1 always means B wins)")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    bar_path = stem.parent / (stem.name + "-bar.png")
+    fig.savefig(bar_path, dpi=150)
+    plt.close(fig)
+    print(f"wrote {bar_path}")
+
+    # ── radar chart ───────────────────────────────────────────────────────────
+    N = len(labels)
+    if N < 3:
+        print("WARN: fewer than 3 metrics — skipping radar chart", file=sys.stderr)
+        return
+
+    angles = np.linspace(0, 2 * math.pi, N, endpoint=False).tolist()
+    # close the polygon
+    ratios_closed = ratios + [ratios[0]]
+    angles_closed = angles + [angles[0]]
+    labels_closed = labels + [labels[0]]
+
+    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={"polar": True})
+    ax.plot(angles_closed, ratios_closed, "o-", linewidth=1.5, color="#2980b9")
+    ax.fill(angles_closed, ratios_closed, alpha=0.25, color="#2980b9")
+    ax.axhline(1.0, color="gray", linewidth=0.6, linestyle="--")
+    ax.set_thetagrids(np.degrees(angles), [lb.replace("\n", " ") for lb in labels], fontsize=7)
+    ax.set_title(
+        f"{label_a} vs {label_b}\nRadar (>1 spoke = {label_b} better)",
+        pad=20, fontsize=10,
+    )
+    radar_path = stem.parent / (stem.name + "-radar.png")
+    fig.tight_layout()
+    fig.savefig(radar_path, dpi=150)
+    plt.close(fig)
+    print(f"wrote {radar_path}")
 
 
 if __name__ == "__main__":
