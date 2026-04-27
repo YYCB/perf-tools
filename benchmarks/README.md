@@ -24,5 +24,34 @@ Use [`templates/benchmark-template/`](../templates/benchmark-template/) as a sta
 
 ## Status
 
-- ✅ `system/cpu/sysbench` — first end-to-end loop (M1)
-- 📝 everything else — stubs, scheduled for M2/M3/M4 (see top-level README roadmap).
+### System benchmarks
+
+| Benchmark | Status | Hardware required |
+|---|---|---|
+| `system/cpu/sysbench` | ✅ ready | any |
+| `system/memory` | ✅ ready | any |
+| `system/network` | ✅ ready | any (python3 fallback) |
+| `system/storage` | ✅ ready | any (python3 fallback) |
+| `system/power-thermal` | ✅ ready | platform telemetry tool |
+| `system/npu` | ✅ ready | Orin / S100 / ONNX Runtime fallback |
+| `system/gpu` | 📝 stub | GPU |
+
+### ROS 2 benchmarks
+
+| Benchmark | Status | Hardware required |
+|---|---|---|
+| `ros2/pubsub-latency` | ✅ ready | ROS 2 |
+| `ros2/dds-vendors` | ✅ ready | ROS 2 + multiple RMWs |
+| `ros2/intra-process` | ✅ ready | ROS 2 |
+| `ros2/lifecycle-startup` | ✅ ready | ROS 2 |
+| `ros2/tf2-throughput` | ✅ ready | ROS 2 + tf2_ros |
+| `ros2/app-profiler` | ✅ ready | any + optional perf |
+
+### E2E benchmarks
+
+| Benchmark | Status | Hardware required |
+|---|---|---|
+| `e2e/nav2-loop` | 📝 stub | physical robot + Nav2 |
+| `e2e/perception-pipeline` | 📝 stub | camera sensor + GPU |
+| `e2e/slam` | 📝 stub | LiDAR/camera + SLAM stack |
+

@@ -71,14 +71,16 @@ trap 'rm -f "${FIO_FILE}"' EXIT
 
 # Helper: size string → bytes (supports K/M/G suffixes, case-insensitive)
 size_to_bytes() {
-  python3 -c "
-s='$1'.upper()
-mul={'K':1024,'M':1024**2,'G':1024**3}
-for suf,m in mul.items():
-    if s.endswith(suf):
-        print(int(s[:-1])*m); exit()
-print(int(s))
-"
+  python3 - "$1" <<'PYEOF'
+import sys, re
+s = sys.argv[1].strip().upper()
+m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*([KMG]?)', s)
+if not m:
+    raise SystemExit(f"invalid size: {sys.argv[1]!r}")
+val = float(m.group(1))
+mul = {'K': 1024, 'M': 1024**2, 'G': 1024**3, '': 1}
+print(int(val * mul[m.group(2)]))
+PYEOF
 }
 
 # ─── fio ─────────────────────────────────────────────────────────────────────

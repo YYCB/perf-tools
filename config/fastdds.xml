@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fast DDS (eProsima) configuration for ROS 2 performance benchmarking.
+
+  Usage:
+    export FASTRTPS_DEFAULT_PROFILES_FILE=/path/to/config/fastdds.xml
+
+  Fast DDS supports multiple transports.  This profile configures:
+    1. UDP unicast  — default; low latency for small messages.
+    2. Shared Memory (SHM) — zero-copy for intra-host; auto-negotiated.
+    3. Large-data mode    — async mode + bigger UDP buffers for > 64 KB.
+
+  Profile notes:
+    - "DEFAULT_FASTRTPS_PROFILES" is the default profile used by all nodes.
+    - Add named profiles and select them with
+        FASTRTPS_DEFAULT_PROFILES_FILE=... ros2 run ...
+
+  After changing: restart all ROS 2 processes.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+
+  <!-- ── Default participant profile ──────────────────────────────────────── -->
+  <profiles>
+    <participant profile_name="DEFAULT_FASTRTPS_PROFILES" is_default_profile="true">
+      <rtps>
+
+        <!-- Use both UDP and Shared Memory transports.
+             Shared Memory is automatically preferred for intra-host comm. -->
+        <useBuiltinTransports>true</useBuiltinTransports>
+        <!--
+        <userTransports>
+          <transport_id>udp_transport</transport_id>
+          <transport_id>shm_transport</transport_id>
+        </userTransports>
+        -->
+
+        <!-- Tune UDP socket buffers.  Matching kernel settings required:
+               sudo sysctl -w net.core.rmem_max=26214400
+               sudo sysctl -w net.core.wmem_max=26214400 -->
+        <sendSocketBufferSize>8388608</sendSocketBufferSize>    <!-- 8 MB -->
+        <listenSocketBufferSize>26214400</listenSocketBufferSize> <!-- 25 MB -->
+
+        <!-- Thread settings for the receive pool threads -->
+        <threadSettings>
+          <scheduling_policy>-1</scheduling_policy>
+          <priority>0</priority>
+          <affinity>0</affinity>
+        </threadSettings>
+
+      </rtps>
+    </participant>
+
+    <!-- ── Publisher profile: async mode (better for large messages) ──────── -->
+    <publisher profile_name="async_publisher">
+      <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+      <publishMode>
+        <kind>ASYNCHRONOUS</kind>
+      </publishMode>
+      <qos>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+        <durability>
+          <kind>VOLATILE</kind>
+        </durability>
+      </qos>
+    </publisher>
+
+    <!-- ── Publisher profile: sync mode (lower latency for small messages) ── -->
+    <publisher profile_name="sync_publisher">
+      <historyMemoryPolicy>PREALLOCATED</historyMemoryPolicy>
+      <publishMode>
+        <kind>SYNCHRONOUS</kind>
+      </publishMode>
+      <qos>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+        <durability>
+          <kind>VOLATILE</kind>
+        </durability>
+      </qos>
+    </publisher>
+
+    <!-- ── Subscriber profile: preallocated memory (lower jitter) ─────────── -->
+    <subscriber profile_name="perf_subscriber">
+      <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+      <qos>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+        <durability>
+          <kind>VOLATILE</kind>
+        </durability>
+      </qos>
+    </subscriber>
+
+  </profiles>
+
+  <!-- ── Transport descriptors ─────────────────────────────────────────────── -->
+  <transports>
+
+    <!-- UDP transport with enlarged socket buffers -->
+    <transport_descriptor>
+      <transport_id>udp_transport</transport_id>
+      <type>UDPv4</type>
+      <sendBufferSize>8388608</sendBufferSize>
+      <receiveBufferSize>26214400</receiveBufferSize>
+      <!-- Increase max message size for large payloads (point clouds, images).
+           Must be ≤ network MTU fragmented correctly by DDS. -->
+      <maxMessageSize>65500</maxMessageSize>
+    </transport_descriptor>
+
+    <!-- Shared Memory transport (intra-host zero-copy) -->
+    <transport_descriptor>
+      <transport_id>shm_transport</transport_id>
+      <type>SHM</type>
+      <!-- Segment size: at least 2× your largest message payload -->
+      <segment_size>67108864</segment_size>  <!-- 64 MB -->
+      <port_queue_capacity>512</port_queue_capacity>
+      <healthy_check_timeout_ms>1000</healthy_check_timeout_ms>
+    </transport_descriptor>
+
+  </transports>
+
+</dds>

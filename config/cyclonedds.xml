@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CycloneDDS configuration for ROS 2 performance benchmarking.
+
+  Usage:
+    export CYCLONEDDS_URI=file:///path/to/config/cyclonedds.xml
+
+  Performance tuning checklist:
+    1. Set SocketReceiveBufferSize + kernel sysctl rmem_max (see comments).
+    2. Choose the right network interface for AllowMulticast.
+    3. For intra-host DDS: SharedMemory (loopback) can be faster than UDP.
+    4. For point cloud / image transport (large messages): raise MaxMessageSize
+       and FragmentSize; lower values cause excessive fragmentation overhead.
+    5. For real-time systems: set the receiver thread affinity + SCHED_FIFO.
+
+  After changing: restart all ROS 2 processes so discovery and QoS negotiation
+  can pick up the new settings.
+-->
+<CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cdds.xsd">
+
+  <Domain id="any">
+
+    <!-- ── Network ─────────────────────────────────────────────────────────── -->
+    <General>
+      <!-- Set to a specific interface name (e.g. eth0, lo) to avoid
+           accidental multi-NIC issues. Use "auto" for default. -->
+      <NetworkInterfaceAddress>auto</NetworkInterfaceAddress>
+
+      <!-- Disable multicast if running on a network where it is unreliable
+           or when doing point-to-point latency measurements. -->
+      <AllowMulticast>true</AllowMulticast>
+
+      <!-- Maximum DDS message size before fragmentation.
+           Point clouds / images are typically > 1 MB → use 65 KB.
+           Reducing below the network MTU causes unnecessary fragmentation. -->
+      <MaxMessageSize>65507B</MaxMessageSize>
+
+      <!-- Fragment size for large messages. Should be ≤ network MTU − UDP header.
+           For loopback benchmarks set to MaxMessageSize (no fragmentation). -->
+      <FragmentSize>4000B</FragmentSize>
+    </General>
+
+    <!-- ── Internal tuning ──────────────────────────────────────────────────── -->
+    <Internal>
+      <!-- Socket receive/send buffers.  Apply the matching kernel settings:
+             sudo sysctl -w net.core.rmem_max=26214400
+             sudo sysctl -w net.core.rmem_default=26214400
+             sudo sysctl -w net.core.wmem_max=26214400
+           Persistent: add the above to /etc/sysctl.d/99-ros2-dds.conf -->
+      <SocketReceiveBufferSize min="10MB"/>
+      <SocketSendBufferSize    min="10MB"/>
+
+      <!-- Watermark for the internal delivery queue.
+           Low watermarks reduce latency; high watermarks improve throughput.
+           For < 64 KB messages (latency focus): 1-2 MB is good.
+           For > 1 MB messages (throughput focus): 128 MB+ recommended. -->
+      <Watermarks>
+        <WhcHigh>500kB</WhcHigh>
+      </Watermarks>
+
+      <!-- DDSI port offsets (change if multiple DDS applications conflict) -->
+      <!--
+      <MulticastRecvNetworkInterfaceAddresses>preferred</MulticastRecvNetworkInterfaceAddresses>
+      -->
+    </Internal>
+
+    <!-- ── Threads ───────────────────────────────────────────────────────────── -->
+    <!--
+    <Threads>
+      <Thread name="recv">
+        <Scheduling>
+          <Class>Fifo</Class>
+          <Priority>10</Priority>
+        </Scheduling>
+      </Thread>
+      <Thread name="tev">
+        <Scheduling>
+          <Class>Fifo</Class>
+          <Priority>10</Priority>
+        </Scheduling>
+      </Thread>
+    </Threads>
+    -->
+
+    <!-- ── Tracing (enable for debugging, disable for benchmarks) ─────────── -->
+    <Tracing>
+      <Verbosity>warning</Verbosity>
+      <OutputFile>stderr</OutputFile>
+    </Tracing>
+
+  </Domain>
+</CycloneDDS>

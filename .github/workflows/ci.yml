@@ -1,0 +1,219 @@
+name: CI — quick benchmark self-test
+
+on:
+  push:
+    branches: ["main", "copilot/**"]
+  pull_request:
+    branches: ["main"]
+
+# Only allow one CI run per ref at a time; cancel older runs on the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimal permissions: read-only access to repository contents.
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Syntax and static checks (no benchmark execution) ──────────────────
+  lint:
+    name: Lint & syntax check
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python syntax check (all .py files)
+        run: |
+          python3 -m py_compile scripts/regression.py
+          python3 -m py_compile scripts/trend.py
+          python3 -m py_compile scripts/compare.py
+          python3 -m py_compile scripts/collect-results.py
+          python3 -m py_compile scripts/compare-app-profile.py
+          python3 -m py_compile benchmarks/ros2/pubsub-latency/latency_probe.py
+          python3 -m py_compile benchmarks/ros2/app-profiler/monitor.py
+          python3 -m py_compile benchmarks/ros2/app-profiler/gen-report.py
+          echo "All Python files OK"
+
+      - name: Bash syntax check (all run.sh and script files)
+        run: |
+          for f in \
+            scripts/run-suite.sh \
+            scripts/env-snapshot.sh \
+            scripts/install-deps.sh \
+            benchmarks/system/cpu/sysbench/run.sh \
+            benchmarks/system/memory/run.sh \
+            benchmarks/system/network/run.sh \
+            benchmarks/system/storage/run.sh \
+            benchmarks/system/npu/run.sh \
+            benchmarks/system/power-thermal/run.sh \
+            benchmarks/ros2/pubsub-latency/run.sh \
+            benchmarks/ros2/dds-vendors/run.sh \
+            benchmarks/ros2/intra-process/run.sh \
+            benchmarks/ros2/lifecycle-startup/run.sh \
+            benchmarks/ros2/tf2-throughput/run.sh \
+            benchmarks/ros2/app-profiler/profile.sh
+          do
+            bash -n "$f" && echo "OK: $f" || { echo "FAIL: $f"; exit 1; }
+          done
+
+      - name: Check shell scripts are executable
+        run: |
+          for f in \
+            scripts/run-suite.sh \
+            scripts/env-snapshot.sh \
+            benchmarks/system/cpu/sysbench/run.sh \
+            benchmarks/system/memory/run.sh \
+            benchmarks/system/network/run.sh \
+            benchmarks/system/storage/run.sh
+          do
+            test -x "$f" && echo "executable: $f" || { echo "NOT executable: $f"; exit 1; }
+          done
+
+  # ── 2. System benchmarks (hardware-agnostic, python3 fallbacks) ───────────
+  system-benchmarks:
+    name: System benchmarks (python3 fallbacks)
+    runs-on: ubuntu-22.04
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install minimal deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            sysbench fio iperf3 stress-ng python3
+
+      - name: Run quick suite (sysbench CPU)
+        run: |
+          ./scripts/run-suite.sh --platform=ci-runner --suite=quick \
+            --out-dir=/tmp/perf-results --timeout=120
+          echo "run dir OK"
+
+      - name: Run network benchmark (python3 fallback)
+        run: |
+          ./benchmarks/system/network/run.sh \
+            --platform=ci-runner \
+            --run-dir=/tmp/perf-net \
+            --duration=3 --iterations=3 --warmup=1
+          cat /tmp/perf-net/system.network.json
+
+      - name: Run storage benchmark (fio + python3)
+        run: |
+          ./benchmarks/system/storage/run.sh \
+            --platform=ci-runner \
+            --run-dir=/tmp/perf-storage \
+            --size=32M --iterations=2 --warmup=1 \
+            --work-dir=/tmp
+          cat /tmp/perf-storage/system.storage.json
+
+      - name: Run memory benchmark
+        run: |
+          ./benchmarks/system/memory/run.sh \
+            --platform=ci-runner \
+            --run-dir=/tmp/perf-mem \
+            --iterations=3 --warmup=1 --array-mb=64
+          cat /tmp/perf-mem/system.memory.json
+
+  # ── 3. Scripts unit tests ─────────────────────────────────────────────────
+  scripts-test:
+    name: Scripts unit tests
+    runs-on: ubuntu-22.04
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python deps
+        run: pip3 install --quiet matplotlib numpy
+
+      - name: Test collect-results.py (empty results dir)
+        run: |
+          mkdir -p /tmp/results/ci-runner
+          python3 scripts/collect-results.py \
+            --platform=ci-runner \
+            --results-dir=/tmp/results
+          cat /tmp/results/ci-runner/index.json
+
+      - name: Test regression.py save + check (no regression)
+        run: |
+          RUN=/tmp/reg-test/run1
+          mkdir -p "${RUN}"
+          cat > "${RUN}/system.cpu.sysbench.json" << 'EOF'
+          {"schema_version":"1","benchmark":"system.cpu.sysbench","platform":"ci",
+           "timestamp":"2026-01-01T00:00:00Z","metrics":{"events_per_sec":{"p50":10000.0,"unit":"1/s"}}}
+          EOF
+          python3 scripts/regression.py save \
+            --run-dir="${RUN}" \
+            --baseline=/tmp/baseline.json
+          python3 scripts/regression.py check \
+            --run-dir="${RUN}" \
+            --baseline=/tmp/baseline.json \
+            --warn-pct=5 --fail-pct=15
+          echo "regression check exit=$?"
+
+      - name: Test regression.py check (regression detected → exit 1)
+        run: |
+          RUN=/tmp/reg-test/run2
+          mkdir -p "${RUN}"
+          # 30% regression should trigger FAIL
+          cat > "${RUN}/system.cpu.sysbench.json" << 'EOF'
+          {"schema_version":"1","benchmark":"system.cpu.sysbench","platform":"ci",
+           "timestamp":"2026-01-02T00:00:00Z","metrics":{"events_per_sec":{"p50":7000.0,"unit":"1/s"}}}
+          EOF
+          python3 scripts/regression.py check \
+            --run-dir="${RUN}" \
+            --baseline=/tmp/baseline.json \
+            --warn-pct=5 --fail-pct=15 \
+            --out=/tmp/regression.md && EXIT=0 || EXIT=$?
+          echo "exit=${EXIT}"
+          cat /tmp/regression.md
+          [[ "${EXIT}" -eq 1 ]] && echo "PASS: regression correctly detected" || { echo "FAIL: expected exit 1"; exit 1; }
+
+      - name: Test compare.py
+        run: |
+          mkdir -p /tmp/cmp/a /tmp/cmp/b
+          echo '{"schema_version":"1","benchmark":"system.cpu.sysbench","platform":"a","timestamp":"2026-01-01T00:00:00Z","metrics":{"events_per_sec":{"p50":10000.0,"unit":"1/s"}}}' > /tmp/cmp/a/system.cpu.sysbench.json
+          echo '{}' > /tmp/cmp/a/env.json
+          echo '{"schema_version":"1","benchmark":"system.cpu.sysbench","platform":"b","timestamp":"2026-01-01T00:00:00Z","metrics":{"events_per_sec":{"p50":12000.0,"unit":"1/s"}}}' > /tmp/cmp/b/system.cpu.sysbench.json
+          echo '{}' > /tmp/cmp/b/env.json
+          python3 scripts/compare.py --a /tmp/cmp/a --b /tmp/cmp/b \
+            --out /tmp/cmp/report.md --charts
+          cat /tmp/cmp/report.md
+
+  # ── 4. Validate result schema ─────────────────────────────────────────────
+  schema-validation:
+    name: Schema validation
+    runs-on: ubuntu-22.04
+    needs: system-benchmarks
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sysbench and run a real benchmark
+        run: |
+          sudo apt-get install -y --no-install-recommends sysbench
+          ./benchmarks/system/cpu/sysbench/run.sh \
+            --platform=ci-runner \
+            --run-dir=/tmp/schema-test \
+            --threads=2 --duration=5 --iterations=3
+          python3 scripts/collect-results.py \
+            --platform=ci-runner \
+            --results-dir=/tmp
+
+          # Verify index.json was created and has no errors
+          python3 - << 'PY'
+          import json, sys
+          idx = json.load(open('/tmp/ci-runner/index.json'))
+          errors = [e for r in idx['runs'] for e in r.get('errors', [])]
+          if errors:
+              print(f"SCHEMA ERRORS: {errors}", file=sys.stderr)
+              sys.exit(1)
+          print(f"OK: {len(idx['runs'])} run(s), no schema errors")
+          PY
