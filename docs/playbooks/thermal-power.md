@@ -183,8 +183,66 @@ benchmarks/system/power-thermal/run.sh \
 - `freq_throttle_events`（次数 + 总时长）
 - 时间序列 CSV
 
-## TODO
+## 7. tegrastats 快速解析
 
-- [ ] tegrastats 解析脚本
-- [ ] INA226 采样脚本
-- [ ] 跨平台等功耗对比模板
+```python
+#!/usr/bin/env python3
+"""Parse tegrastats log and print power/temp summary.
+Usage: python3 parse_tegrastats.py /tmp/tegrastats.log
+"""
+import re, sys, statistics
+
+lines = open(sys.argv[1]).readlines()
+vdd_in, cpu_temps = [], []
+for line in lines:
+    m = re.search(r'VDD_IN (\d+)mW', line)
+    if m: vdd_in.append(int(m.group(1)) / 1000.0)
+    m = re.search(r'cpu@(\d+)', line)
+    if m: cpu_temps.append(int(m.group(1)))
+
+if vdd_in:
+    p = sorted(vdd_in)
+    print(f"VDD_IN: avg={statistics.fmean(vdd_in):.1f}W  "
+          f"p95={p[int(len(p)*.95)]:.1f}W  peak={max(vdd_in):.1f}W")
+if cpu_temps:
+    print(f"CPU temp: avg={statistics.fmean(cpu_temps):.0f}°C  max={max(cpu_temps)}°C")
+```
+
+## 8. INA226 外置功率计采集（RK3588 等无内置功率传感器的平台）
+
+RK3588 等平台无法从软件读取功耗，需外置 INA226 电流传感器（常见于开发板评估套件）：
+
+```bash
+# 读取 INA226 的 sysfs 接口（路径因板卡而异）
+cat /sys/bus/i2c/drivers/ina226/*/power    # µW
+cat /sys/bus/i2c/drivers/ina226/*/in_voltage0_input   # mV
+
+# 采样脚本（1 Hz）
+while true; do
+  POWER=$(cat /sys/bus/i2c/drivers/ina226/*/power 2>/dev/null | head -1)
+  [[ -n "${POWER}" ]] && echo "$(date +%s) $((POWER / 1000000)) W"
+  sleep 1
+done | tee /tmp/ina226.log
+```
+
+## 9. 跨平台等功耗对比
+
+对比不同平台在相同功耗预算下的性能：
+
+```bash
+# Orin @ 30W  vs  S100 @ 30W
+# 1. 设置各平台功耗上限
+sudo nvpmodel -m 2  # Orin 30W 模式
+
+# 2. 跑标准套件
+./scripts/run-suite.sh --platform=orin-30w --suite=standard
+
+# 3. 对比报告（含 perf/W 列）
+python3 scripts/compare.py \
+    --a results/orin-30w/<run> \
+    --b results/s100-30w/<run> \
+    --out reports/orin-vs-s100-30w.html
+```
+
+`compare.py` 在结果 JSON 中有 `power_w` 字段时自动计算 perf/W 列。
+

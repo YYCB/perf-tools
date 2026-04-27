@@ -321,11 +321,11 @@ def main() -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    fmt = args.format
-    if fmt is None:
-        fmt = "html" if out.suffix.lower() == ".html" else "markdown"
+    output_format = args.format
+    if output_format is None:
+        output_format = "html" if out.suffix.lower() == ".html" else "markdown"
 
-    if fmt == "html":
+    if output_format == "html":
         html_content = render_html(run_a, run_b, label_a, label_b, args.a, args.b)
         out.write_text(html_content, encoding="utf-8")
         print(f"wrote {out}")

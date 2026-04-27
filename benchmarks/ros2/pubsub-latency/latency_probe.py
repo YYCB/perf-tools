@@ -66,8 +66,11 @@ def _make_qos(reliability: str, durability: str, depth: int = 10) -> QoSProfile:
 class Ponger(Node):
     """Echo node: receive on /perf/ping, republish on /perf/pong unchanged."""
 
-    def __init__(self, qos: QoSProfile) -> None:
-        super().__init__("perf_ponger")
+    def __init__(self, qos: QoSProfile, node_options=None) -> None:
+        kwargs = {"node_name": "perf_ponger"}
+        if node_options is not None:
+            kwargs["node_options"] = node_options
+        super().__init__(**kwargs)
         self._pub = self.create_publisher(UInt8MultiArray, "/perf/pong", qos)
         self._sub = self.create_subscription(
             UInt8MultiArray, "/perf/ping", self._cb, qos
@@ -80,8 +83,11 @@ class Ponger(Node):
 class Pinger(Node):
     """Ping node: send timestamped message, wait for pong, measure RTT."""
 
-    def __init__(self, qos: QoSProfile, payload_bytes: int) -> None:
-        super().__init__("perf_pinger")
+    def __init__(self, qos: QoSProfile, payload_bytes: int, node_options=None) -> None:
+        kwargs = {"node_name": "perf_pinger"}
+        if node_options is not None:
+            kwargs["node_options"] = node_options
+        super().__init__(**kwargs)
         self._pub = self.create_publisher(UInt8MultiArray, "/perf/ping", qos)
         self._sub = self.create_subscription(
             UInt8MultiArray, "/perf/pong", self._pong_cb, qos
@@ -128,13 +134,20 @@ def main() -> int:
                     help="messages to discard before recording")
     ap.add_argument("--rate-hz", type=float, default=100.0,
                     help="publish rate in Hz")
+    ap.add_argument("--intra-process", action="store_true",
+                    help="enable ROS 2 intra-process communication (zero-copy within process)")
     args = ap.parse_args()
+    # argparse converts '--intra-process' to 'args.intra_process' automatically.
 
     rclpy.init()
 
+    node_options = rclpy.node.NodeOptions()
+    if args.intra_process:
+        node_options = node_options.use_intra_process_comms(True)
+
     qos = _make_qos(args.qos_reliability, args.qos_durability)
-    ponger = Ponger(qos)
-    pinger = Pinger(qos, args.payload_bytes)
+    ponger = Ponger(qos, node_options)
+    pinger = Pinger(qos, args.payload_bytes, node_options)
 
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(ponger)
