@@ -56,6 +56,7 @@ python3 scripts/trend.py --platform=orin --out reports/orin-trend.html
 
 | 路径 | 说明 |
 |---|---|
+| [**`docs/user-manual.md`**](docs/user-manual.md) | **📖 完整用户手册（所有脚本 CLI 参考 + 典型工作流）** |
 | [`docs/methodology.md`](docs/methodology.md) | 基准测试方法论：环境隔离、热机、统计 |
 | [`docs/metrics-glossary.md`](docs/metrics-glossary.md) | 指标词典：p50/p95/p99、jitter、TOPS 利用率… |
 | [`docs/result-schema.md`](docs/result-schema.md) | 统一结果 JSON schema |
@@ -118,6 +119,7 @@ python3 scripts/regression.py save --run-dir results/orin/<date> --baseline base
 python3 scripts/regression.py check --run-dir results/orin/<new> --baseline baselines/orin.json
 ```
 
+See [**`docs/user-manual.md`**](docs/user-manual.md) for the complete CLI reference and typical workflows.
 See [`docs/methodology.md`](docs/methodology.md) for the rules every benchmark must follow to produce comparable numbers, and [`docs/case-studies/orin-vs-s100.md`](docs/case-studies/orin-vs-s100.md) for the flagship workflow.
 
 ### What's ready
